@@ -27,7 +27,7 @@
    ```
 4. 監視したい URL を追加:
    ```
-   /add_watch_url url https://example.com
+   /add_watch_url https://example.com
    ```
 5. 監視を停止・再開したい場合:
    ```

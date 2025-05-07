@@ -1,5 +1,7 @@
 # UpdateDetection
 
+***[インストールリンク](https://discord.com/oauth2/authorize?client_id=1368495921796747315&permissions=84992&integration_type=0&scope=bot+applications.commands)***
+
 ## Slash コマンド一覧
 
 | コマンド名 | 引数 | 説明 |

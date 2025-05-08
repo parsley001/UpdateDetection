@@ -317,7 +317,7 @@ async def stop_monitoring(interaction: discord.Interaction):
         await interaction.response.send_message("このサーバーでのWebサイトの監視機能を停止しました。")
     else:
         await interaction.response.send_message(
-            "このサーバーでは監視機能は実行されていません。", ephemeral=True
+            "このサーバーでは監視機能はすでに停止しています。", ephemeral=True
         )
 
 @client.tree.command(

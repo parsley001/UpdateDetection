@@ -6,8 +6,23 @@ import requests
 import asyncio
 from datetime import datetime, timedelta
 import pytz
+from difflib import SequenceMatcher
+import google.generativeai as genai
+import textwrap
+from dotenv import load_dotenv
+
+# .env ファイルから環境変数を読み込む
+load_dotenv()
 
 intents = discord.Intents.default()
+
+# --- GEMINI APIキー設定 --- 
+# 環境変数 GEMINI_API_KEY からAPIキーを読み込みます。
+# この環境変数が設定されていない場合、プログラムは起動時にエラーとなります。
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+if not GEMINI_API_KEY:
+    raise ValueError("環境変数 GEMINI_API_KEY が設定されていません。プログラムを終了します。")
+genai.configure(api_key=GEMINI_API_KEY)
 
 class WebMonitorClient(discord.Client):
     def __init__(self):
@@ -78,16 +93,82 @@ class WebMonitorClient(discord.Client):
             print(f"ウェブページの取得に失敗しました ({url}): {e}")
             return None
 
-    async def compare_content(self, current_content, url):
-        if url not in self.previous_content:
-            self.previous_content[url] = current_content
+    async def ask_gemini_if_significant_change(self, old_html: str, new_html: str, url: str) -> bool:
+        MAX_HTML_LENGTH = 4000  # Gemini に渡すHTMLの最大文字数（トークン数に応じて調整が必要）
+
+        try:
+            model = genai.GenerativeModel('gemini-1.5-flash-latest')
+
+            # HTMLが長すぎる場合は切り詰める（より高度な抽出・要約処理を推奨）
+            truncated_old_html = old_html[:MAX_HTML_LENGTH]
+            truncated_new_html = new_html[:MAX_HTML_LENGTH]
+
+            prompt = textwrap.dedent(f"""
+                あなたはウェブサイトの変更検出アシスタントです。
+                以下の2つのHTMLコンテンツは、ウェブページ {url} のものです。
+                以前のHTMLと現在のHTMLを比較し、ユーザーにとって意味のある重要な変更があったかどうかを判断してください。
+                広告のローテーション、タイムスタンプの更新、主要コンテンツではないカウンター、トラッキングピクセルの変更、
+                ページ構造に影響しないマイナーなスタイル変更やスクリプトの更新など、些細な変更は無視してください。
+                主要な記事内容、見出し、重要な数値（例：在庫数、価格）、お知らせ、イベント情報など、
+                ユーザーが知りたいであろう本質的な情報の変更に焦点を当ててください。
+
+                以前のHTML (先頭{MAX_HTML_LENGTH}文字):
+                {truncated_old_html}
+
+                現在のHTML (先頭{MAX_HTML_LENGTH}文字):
+                {truncated_new_html}
+
+                重要な変更があった場合は "YES"、そうでない場合は "NO" とだけ応答してください。
+                """)
+
+            print(f"[DEBUG] Gemini API呼び出し開始 for {url}. Prompt length: {len(prompt)}")
+            response = await model.generate_content_async(prompt)
+            
+            # デバッグ用にレスポンス全体も表示
+            print(f"[DEBUG] Gemini API Response for {url}: {response.text}")
+
+            # 応答を解析 (大文字・小文字を区別せず、空白を除去)
+            answer = response.text.strip().upper()
+            if answer == "YES":
+                print(f"[INFO] Gemini判定: {url} に重要な変更あり")
+                return True
+            elif answer == "NO":
+                print(f"[INFO] Gemini判定: {url} に重要な変更なし")
+                return False
+            else:
+                print(f"[WARN] Geminiからの予期しない応答 ({url}): '{response.text}'. 変更なしとして扱います。")
+                return False
+
+        except Exception as e:
+            print(f"[ERROR] Gemini API呼び出し中にエラーが発生しました ({url}): {e}")
+            print(f"[INFO] Gemini APIエラーのため、{url} の変更は「なし」として処理を続行します。")
+            return False # APIエラー時は変更なしとしてフォールバック
+
+    async def compare_content(self, current_content_html: str, url: str):
+        previous_content_html = self.previous_content.get(url)
+
+        if previous_content_html is None:
+            # 初回取得時はコンテンツを保存し、変更なしとする
+            self.previous_content[url] = current_content_html
             self.save_config()
+            print(f"[DEBUG] Initial fetch for {url}. Storing content. No notification.")
             return False
-        if self.previous_content[url] != current_content:
-            self.previous_content[url] = current_content
+
+        # Geminiモデル（のプレースホルダー）を使って比較
+        is_significant_change = await self.ask_gemini_if_significant_change(
+            old_html=previous_content_html,
+            new_html=current_content_html,
+            url=url
+        )
+
+        if is_significant_change:
+            print(f"[DEBUG] Gemini (placeholder) detected significant change for {url}.")
+            self.previous_content[url] = current_content_html # 変更があったので保存内容を更新
             self.save_config()
             return True
-        return False
+        else:
+            print(f"[DEBUG] Gemini (placeholder) detected no significant change for {url}.")
+            return False
 
     async def monitor_website(self, guild_id):
         if not self.monitoring_enabled.get(guild_id, False):
